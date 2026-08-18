@@ -10866,6 +10866,7 @@ class VerdictReviewView(LayoutViewBase if container_components_available() else 
         super().__init__(timeout=None)
         self.req_id = str(req_id)
         self.add_item(VerdictReviewSelect(self.req_id))
+        add_v2_action_rows(self)
 
     async def interaction_check(self, interaction: Interaction) -> bool:
         if interaction.user.guild_permissions.administrator:
@@ -11102,6 +11103,7 @@ class VerdictAfterView(LayoutViewBase if container_components_available() else V
     def __init__(self, req_id: str):
         super().__init__(timeout=None)
         self.add_item(VerdictAfterSelect(str(req_id)))
+        add_v2_action_rows(self)
 
 
 class VerdictResultView(LayoutViewBase if container_components_available() else View):
@@ -11115,6 +11117,7 @@ class VerdictResultView(LayoutViewBase if container_components_available() else 
         )
         button.callback = self.open_result
         self.add_item(button)
+        add_v2_action_rows(self)
 
     async def open_result(self, interaction: Interaction):
         req = verdicts_data.get("requests", {}).get(self.req_id)
@@ -11266,11 +11269,28 @@ async def принятьверд(ctx, number: int):
     embed.add_field(name="Статус", value="⏳ На рассмотрении", inline=False)
 
     content = verdict_ping_roles_line(req_channel.guild) if getattr(req_channel, "guild", None) else ""
-    msg = await req_channel.send(
-        content=(content or None),
-        embed=embed,
-        view=VerdictReviewView(str(number)),
-    )
+    if container_components_available():
+        blocks = build_verdict_request_blocks(req)
+        payload = send_payload_for_container(
+            blocks,
+            view=make_container_view(
+                blocks,
+                view_cls=VerdictReviewView,
+                view_args=(str(number),),
+                timeout=None,
+            ),
+        )
+        if content and payload.get("content"):
+            payload["content"] = f"{content}\n\n{payload['content']}"
+        elif content:
+            payload["content"] = content
+        msg = await req_channel.send(**payload)
+    else:
+        msg = await req_channel.send(
+            content=(content or None),
+            embed=embed,
+            view=VerdictReviewView(str(number)),
+        )
     req["request_message_id"] = msg.id
     req["request_channel_id"] = msg.channel.id
     req["status"] = "pending"
@@ -25668,11 +25688,7 @@ def factory_page_payload(uid: str, page: int = 0, *, view=None):
     blocks = [build_factory_page_text(uid, page)]
     if view is None:
         view = MilitaryFactoriesView(uid, page=page)
-    if container_components_available():
-        container = V2Container(); container.add_item(V2TextDisplay(blocks[0])); view.add_item(container)
-        add_v2_action_rows(view)
-        return {"content": None, "embed": None, "view": view}
-    return {"content": blocks[0], "embed": None, "view": view}
+    return send_payload_for_container(blocks, view=view)
 
 
 class FactoryBuyConfirmView(View):
@@ -25719,6 +25735,7 @@ class MilitaryFactoriesView(LayoutViewBase if container_components_available() e
             elif child.label == "Запустить производство":
                 child.style = ButtonStyle.danger if busy else ButtonStyle.success
                 child.disabled = not bool(factories) or busy
+        add_v2_action_rows(self)
 
     async def interaction_check(self, interaction: Interaction):
         if str(interaction.user.id) != self.uid:
