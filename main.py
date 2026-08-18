@@ -25770,7 +25770,9 @@ class MilitaryFactoriesView(LayoutViewBase if container_components_available() e
             elif child.label == "Запустить производство":
                 child.style = ButtonStyle.danger if busy else ButtonStyle.success
                 child.disabled = not bool(factories) or busy
-        add_v2_action_rows(self)
+        # Let factory_page_payload()/send_payload_for_container() add the
+        # Components V2 text container first and wrap these controls after it,
+        # so the navigation/buy buttons are rendered under the factory card.
 
     async def interaction_check(self, interaction: Interaction):
         if str(interaction.user.id) != self.uid:
