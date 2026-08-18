@@ -45,7 +45,12 @@ SHOP_COMPONENTS_V2_RUNTIME_ENABLED = all((
 ))
 if REGISTRATION_COMPONENTS_V2_RUNTIME_ENABLED or SHOP_COMPONENTS_V2_RUNTIME_ENABLED:
     LayoutViewBase = _DiscordLayoutView
+
 from flask import Flask
+
+
+def shop_supports_components_v2() -> bool:
+    return bool(SHOP_COMPONENTS_V2_RUNTIME_ENABLED and LayoutViewBase is not View)
 
 
 class _DiscordHttpRateLimitFilter(logging.Filter):
@@ -23495,10 +23500,6 @@ def build_registration_request_text(req: dict) -> str:
 
 def registration_supports_components_v2() -> bool:
     return bool(REGISTRATION_COMPONENTS_V2_RUNTIME_ENABLED and LayoutViewBase is not View)
-
-
-def shop_supports_components_v2() -> bool:
-    return bool(SHOP_COMPONENTS_V2_RUNTIME_ENABLED and LayoutViewBase is not View)
 
 
 def disable_registration_components_v2():
