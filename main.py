@@ -25685,12 +25685,19 @@ class MilitaryFactoriesView(LayoutViewBase if container_components_available() e
         busy = False
         if factories:
             busy = int(factories[self.page].get("busy_until", 0) or 0) > int(time.time())
-        self.prev.style = ButtonStyle.secondary
-        self.next.style = ButtonStyle.secondary
-        self.buy.label = "+ завод"
-        self.buy.style = ButtonStyle.primary
-        self.produce.style = ButtonStyle.danger if busy else ButtonStyle.success
-        self.produce.disabled = not bool(factories) or busy
+        for child in self.children:
+            if not isinstance(child, Button):
+                continue
+            if child.label == "⬅️":
+                child.style = ButtonStyle.secondary
+            elif child.label == "➡️":
+                child.style = ButtonStyle.secondary
+            elif child.label == "+ завод":
+                child.label = "+ завод"
+                child.style = ButtonStyle.primary
+            elif child.label == "Запустить производство":
+                child.style = ButtonStyle.danger if busy else ButtonStyle.success
+                child.disabled = not bool(factories) or busy
 
     async def interaction_check(self, interaction: Interaction):
         if str(interaction.user.id) != self.uid:
