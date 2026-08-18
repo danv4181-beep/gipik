@@ -25757,22 +25757,27 @@ class MilitaryFactoriesView(LayoutViewBase if container_components_available() e
         busy = False
         if factories:
             busy = int(factories[self.page].get("busy_until", 0) or 0) > int(time.time())
-        for child in self.children:
-            if not isinstance(child, Button):
-                continue
-            if child.label == "⬅️":
-                child.style = ButtonStyle.secondary
-            elif child.label == "➡️":
-                child.style = ButtonStyle.secondary
-            elif child.label == "+ завод":
-                child.label = "+ завод"
-                child.style = ButtonStyle.primary
-            elif child.label == "Запустить производство":
-                child.style = ButtonStyle.danger if busy else ButtonStyle.success
-                child.disabled = not bool(factories) or busy
-        # Let factory_page_payload()/send_payload_for_container() add the
-        # Components V2 text container first and wrap these controls after it,
-        # so the navigation/buy buttons are rendered under the factory card.
+
+        controls = (
+            Button(label="⬅️", style=ButtonStyle.secondary),
+            Button(label="➡️", style=ButtonStyle.secondary),
+            Button(label="+ завод", style=ButtonStyle.primary, emoji="🏭"),
+            Button(
+                label="Запустить производство",
+                style=ButtonStyle.danger if busy else ButtonStyle.success,
+                emoji="⚙️",
+                disabled=not bool(factories) or busy,
+            ),
+        )
+        callbacks = (self.prev, self.next, self.buy, self.produce)
+        for control, callback in zip(controls, callbacks):
+            control.callback = callback
+            self.add_item(control)
+        # factory_page_payload()/send_payload_for_container() add the Components
+        # V2 text container first and then wrap these direct buttons into action
+        # rows, so the controls render under the factory card. Buttons are added
+        # dynamically instead of via @discord.ui.button because decorator-created
+        # items on LayoutView can be lost when moving them into V2 action rows.
 
     async def interaction_check(self, interaction: Interaction):
         if str(interaction.user.id) != self.uid:
@@ -25782,29 +25787,25 @@ class MilitaryFactoriesView(LayoutViewBase if container_components_available() e
     async def refresh(self, interaction: Interaction):
         await interaction.response.edit_message(**factory_page_payload(self.uid, self.page, view=MilitaryFactoriesView(self.uid, self.page)))
 
-    @discord.ui.button(label="⬅️", style=ButtonStyle.secondary)
-    async def prev(self, interaction: Interaction, button: Button):
+    async def prev(self, interaction: Interaction):
         factories = factories_data.setdefault("users", {}).setdefault(self.uid, [])
         if factories:
             self.page = (self.page - 1) % len(factories)
         await self.refresh(interaction)
 
-    @discord.ui.button(label="➡️", style=ButtonStyle.secondary)
-    async def next(self, interaction: Interaction, button: Button):
+    async def next(self, interaction: Interaction):
         factories = factories_data.setdefault("users", {}).setdefault(self.uid, [])
         if factories:
             self.page = (self.page + 1) % len(factories)
         await self.refresh(interaction)
 
-    @discord.ui.button(label="+ завод", style=ButtonStyle.primary, emoji="🏭")
-    async def buy(self, interaction: Interaction, button: Button):
+    async def buy(self, interaction: Interaction):
         uid = str(interaction.user.id); price = int(factories_data.get("price", 0) or 0); bal = ensure_user(uid)
         if int(bal.get("наличка", 0)) < price:
             await interaction.response.send_message(f"❌ Недостаточно средств. Нужно {fmt_money(price)}.", ephemeral=True); return
         await interaction.response.send_message(f"🏭 Купить военный завод за **{fmt_money(price)}**?", view=FactoryBuyConfirmView(uid, price), ephemeral=True)
 
-    @discord.ui.button(label="Запустить производство", style=ButtonStyle.success, emoji="⚙️")
-    async def produce(self, interaction: Interaction, button: Button):
+    async def produce(self, interaction: Interaction):
         factories = factories_data.setdefault("users", {}).setdefault(self.uid, [])
         if not factories:
             await interaction.response.send_message("❌ Нет заводов.", ephemeral=True); return
