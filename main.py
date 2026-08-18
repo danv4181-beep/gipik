@@ -1046,12 +1046,33 @@ def make_container_view(blocks: list[str] | tuple[str, ...], *, timeout: int = 1
                 container.add_item(V2Separator())
             container.add_item(V2TextDisplay(str(block)))
         view.add_item(container)
+    add_v2_action_rows(view)
     return view
 
 
+
+def add_v2_action_rows(view: View):
+    """Wrap buttons/selects in Components V2 action rows before sending a LayoutView."""
+    if not container_components_available() or V2ActionRow is None:
+        return view
+    interactive_types = (Button, Select, UserSelect)
+    pending = [child for child in list(getattr(view, "children", [])) if isinstance(child, interactive_types)]
+    if not pending:
+        return view
+    for child in pending:
+        try:
+            view.remove_item(child)
+        except Exception:
+            pass
+    for child in pending:
+        row = V2ActionRow()
+        row.add_item(child)
+        view.add_item(row)
+    return view
+
 def send_payload_for_container(blocks: list[str] | tuple[str, ...], *, view=None):
     if container_components_available():
-        return {"content": None, "embed": None, "view": view or make_container_view(blocks)}
+        return {"content": None, "embed": None, "view": add_v2_action_rows(view) if view is not None else make_container_view(blocks)}
     return {"content": "\n\n---\n\n".join(str(b) for b in blocks), "embed": None, "view": view}
 
 
@@ -9509,12 +9530,7 @@ async def _edit_verdict_request_message(
             em.add_field(name="Статус", value=status_text, inline=False)
         if container_components_available():
             blocks = build_verdict_request_blocks(req, status_text)
-            edit_view = view
-            if edit_view is not None:
-                container = V2Container()
-                container.add_item(V2TextDisplay(blocks[0]))
-                edit_view.add_item(container)
-            await msg.edit(content=None, embed=None, view=edit_view or make_container_view(blocks))
+            await msg.edit(content=None, embed=None, view=make_container_view(blocks, view_cls=type(view), view_args=(getattr(view, "req_id", str(req.get("id"))),), timeout=None) if view is not None else make_container_view(blocks))
         else:
             await msg.edit(embed=em, view=view)
     except Exception:
@@ -9582,12 +9598,28 @@ class VerdictPagesView(LayoutViewBase if container_components_available() else V
     @discord.ui.button(label="⬅️", style=ButtonStyle.secondary)
     async def back(self, interaction: Interaction, button: Button):
         self.index = (self.index - 1) % len(self.pages)
-        await interaction.response.edit_message(embed=self.pages[self.index], view=self)
+        if container_components_available():
+            block = str(self.pages[self.index])
+            await interaction.response.edit_message(
+                content=None,
+                embed=None,
+                view=make_container_view([block], view_cls=VerdictPagesView, view_args=(self.pages, self.user_id, self.index), timeout=180),
+            )
+        else:
+            await interaction.response.edit_message(embed=self.pages[self.index], view=self)
 
     @discord.ui.button(label="➡️", style=ButtonStyle.secondary)
     async def next(self, interaction: Interaction, button: Button):
         self.index = (self.index + 1) % len(self.pages)
-        await interaction.response.edit_message(embed=self.pages[self.index], view=self)
+        if container_components_available():
+            block = str(self.pages[self.index])
+            await interaction.response.edit_message(
+                content=None,
+                embed=None,
+                view=make_container_view([block], view_cls=VerdictPagesView, view_args=(self.pages, self.user_id, self.index), timeout=180),
+            )
+        else:
+            await interaction.response.edit_message(embed=self.pages[self.index], view=self)
 
 
 def parse_member_ref(guild: discord.Guild, raw: str):
@@ -9634,6 +9666,23 @@ def build_verdict_request_blocks(req: dict, status_text: str | None = None) -> l
 def build_verdict_page_blocks(req: dict) -> list[str]:
     embeds = build_verdict_pages(req)
     return [f"## {em.title}\n{em.description or ''}\n-# {getattr(em.footer, 'text', '') or ''}" for em in embeds]
+
+
+async def send_verdict_pages_response(interaction: Interaction, req: dict, *, ephemeral: bool = True):
+    pages = build_verdict_pages(req)
+    if container_components_available():
+        blocks = build_verdict_page_blocks(req)
+        first_block = blocks[0] if blocks else "## 📋 Предпросмотр вердикта\nПусто"
+        await interaction.response.send_message(
+            **send_payload_for_container([first_block], view=make_container_view([first_block], view_cls=VerdictPagesView, view_args=(blocks, interaction.user.id), timeout=180)),
+            ephemeral=ephemeral,
+        )
+    else:
+        await interaction.response.send_message(
+            embed=pages[0],
+            view=VerdictPagesView(pages, interaction.user.id),
+            ephemeral=ephemeral,
+        )
 
 
 class VerdictRequestModal(Modal):
@@ -9726,12 +9775,7 @@ class VerdictTextModal(Modal):
         req.setdefault("draft", {}).setdefault("ops", [])
         req["draft"]["verdict_text"] = str(self.text.value).strip()
         save_verdicts_data()
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(
-            embed=pages[0],
-            view=VerdictPagesView(pages, interaction.user.id),
-            ephemeral=True,
-        )
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictMoneyModal(Modal):
@@ -9788,12 +9832,7 @@ class VerdictMoneyModal(Modal):
         )
         save_verdicts_data()
 
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(
-            embed=pages[0],
-            view=VerdictPagesView(pages, interaction.user.id),
-            ephemeral=True,
-        )
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictDescriptionModal(Modal):
@@ -9838,12 +9877,7 @@ class VerdictDescriptionModal(Modal):
         )
         save_verdicts_data()
 
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(
-            embed=pages[0],
-            view=VerdictPagesView(pages, interaction.user.id),
-            ephemeral=True,
-        )
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictReputationModal(Modal):
@@ -9896,12 +9930,7 @@ class VerdictReputationModal(Modal):
             }
         )
         save_verdicts_data()
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(
-            embed=pages[0],
-            view=VerdictPagesView(pages, interaction.user.id),
-            ephemeral=True,
-        )
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictHappinessModal(Modal):
@@ -9954,12 +9983,7 @@ class VerdictHappinessModal(Modal):
             }
         )
         save_verdicts_data()
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(
-            embed=pages[0],
-            view=VerdictPagesView(pages, interaction.user.id),
-            ephemeral=True,
-        )
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictStatPassiveModal(Modal):
@@ -9995,8 +10019,7 @@ class VerdictStatPassiveModal(Modal):
             "label": f"Автоизменение {stat_label} {amount:+d}% для {mention} раз в {format_interval(cooldown)} ({desc})",
         })
         save_verdicts_data()
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(embed=pages[0], view=VerdictPagesView(pages, interaction.user.id), ephemeral=True)
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictScienceModal(Modal):
@@ -10036,12 +10059,7 @@ class VerdictScienceModal(Modal):
             }
         )
         save_verdicts_data()
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(
-            embed=pages[0],
-            view=VerdictPagesView(pages, interaction.user.id),
-            ephemeral=True,
-        )
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictPassiveModal(Modal):
@@ -10114,12 +10132,7 @@ class VerdictPassiveModal(Modal):
             }
         )
         save_verdicts_data()
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(
-            embed=pages[0],
-            view=VerdictPagesView(pages, interaction.user.id),
-            ephemeral=True,
-        )
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 
@@ -10244,8 +10257,7 @@ class VerdictItemModal(Modal):
             "label": f"{'Выдать' if self.mode == 'add' else 'Изъять'} {key} x{qty} для {mention} ({reason})",
         })
         save_verdicts_data()
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(embed=pages[0], view=VerdictPagesView(pages, interaction.user.id), ephemeral=True)
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictPopulationArmyModal(Modal):
@@ -10283,8 +10295,7 @@ class VerdictPopulationArmyModal(Modal):
             "label": f"{'Выдать' if self.mode == 'add' else 'Изъять'} {label_target} {fmt_num(amount)} для {mention} ({reason})",
         })
         save_verdicts_data()
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(embed=pages[0], view=VerdictPagesView(pages, interaction.user.id), ephemeral=True)
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictPopulationPassiveModal(Modal):
@@ -10366,8 +10377,7 @@ class VerdictSphereLevelModal(Modal):
             }
         )
         save_verdicts_data()
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(embed=pages[0], view=VerdictPagesView(pages, interaction.user.id), ephemeral=True)
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 class VerdictSphereLevelSelect(Select):
@@ -10437,18 +10447,29 @@ class VerdictRejectReasonModal(Modal):
         if result_channel:
             author_mention = f"<@{req.get('author_id')}>"
             await result_channel.send(content=author_mention)
-            await result_channel.send(
-                embed=Embed(
-                    title="❌ Вердикт отклонён",
-                    description=(
-                        f"Заявка #{self.req_id} отклонена.\n"
-                        f"**Причина:** {reason}\n"
-                        f"**Ссылка:** {req.get('message_link') or '—'}"
-                    ),
-                    color=0xAA0000,
-                ),
-                view=VerdictAfterView(self.req_id),
+            reject_block = (
+                f"## ❌ Вердикт отклонён\n"
+                f"Заявка #{self.req_id} отклонена.\n"
+                f"**Причина:** {reason}\n"
+                f"**Ссылка:** {req.get('message_link') or '—'}"
             )
+            if container_components_available():
+                await result_channel.send(
+                    **send_payload_for_container([reject_block], view=make_container_view([reject_block], view_cls=VerdictAfterView, view_args=(self.req_id,), timeout=180))
+                )
+            else:
+                await result_channel.send(
+                    embed=Embed(
+                        title="❌ Вердикт отклонён",
+                        description=(
+                            f"Заявка #{self.req_id} отклонена.\n"
+                            f"**Причина:** {reason}\n"
+                            f"**Ссылка:** {req.get('message_link') or '—'}"
+                        ),
+                        color=0xAA0000,
+                    ),
+                    view=VerdictAfterView(self.req_id),
+                )
 
         await interaction.followup.send("✅ Отклонение сохранено и отправлено в итог-канал.", ephemeral=True)
 
@@ -10575,12 +10596,7 @@ class VerdictReviewSelect(Select):
             await interaction.response.send_message(f"✅ Публикация выбора игрока: {'включена' if req.get('show_player_choice_public') else 'выключена'}.", ephemeral=True)
             return
         if choice == "preview":
-            pages = build_verdict_pages(req)
-            blocks = build_verdict_page_blocks(req)
-            if container_components_available():
-                await interaction.response.send_message(**send_payload_for_container([blocks[0]], view=make_container_view([blocks[0]], view_cls=VerdictPagesView, view_args=(pages, interaction.user.id), timeout=180)), ephemeral=True)
-            else:
-                await interaction.response.send_message(embed=pages[0], view=VerdictPagesView(pages, interaction.user.id), ephemeral=True)
+            await send_verdict_pages_response(interaction, req, ephemeral=True)
             return
         if choice == "passive_edit":
             await interaction.response.send_message("Выберите пассивную операцию игрока:", view=VerdictEditPassiveView(self.req_id), ephemeral=True)
@@ -10763,8 +10779,12 @@ class VerdictReviewSelect(Select):
                         if isinstance(_entry, dict) and str(_entry.get("verdict_id")) == str(self.req_id):
                             _entry["verdict_result_url"] = result_msg.jump_url
                             passive_link_changed = True
-                for page in pages[10:]:
-                    await result_channel.send(embed=page)
+                if container_components_available():
+                    for block in build_verdict_page_blocks(req)[10:]:
+                        await result_channel.send(**send_payload_for_container([block]))
+                else:
+                    for page in pages[10:]:
+                        await result_channel.send(embed=page)
                 save_verdicts_data()
                 if passive_link_changed:
                     save_passive_flows()
@@ -11061,8 +11081,12 @@ class VerdictAfterSelect(Select):
                 if ch:
                     try:
                         msg = await ch.fetch_message(int(req.get("result_message_id")))
-                        pages = build_verdict_pages(req)
-                        await msg.edit(embeds=pages[:10], view=None)
+                        if container_components_available():
+                            blocks = build_verdict_page_blocks(req)[:10]
+                            await msg.edit(content=None, embed=None, embeds=[], view=make_container_view(blocks))
+                        else:
+                            pages = build_verdict_pages(req)
+                            await msg.edit(embeds=pages[:10], view=None)
                     except Exception:
                         pass
             await interaction.response.send_message("✅ Вердикт откатан, сохранённые операции возвращены к прежним значениям.", ephemeral=True)
@@ -11097,12 +11121,7 @@ class VerdictResultView(LayoutViewBase if container_components_available() else 
         if not req:
             await interaction.response.send_message("❌ Заявка не найдена.", ephemeral=True)
             return
-        pages = build_verdict_pages(req)
-        await interaction.response.send_message(
-            embed=pages[0],
-            view=VerdictPagesView(pages, interaction.user.id),
-            ephemeral=True,
-        )
+        await send_verdict_pages_response(interaction, req, ephemeral=True)
 
 
 def _can_manage_verdicts_member(member: discord.Member) -> bool:
@@ -24441,6 +24460,7 @@ async def профиль(ctx, member: discord.Member = None):
         container.add_item(V2Separator())
         container.add_item(V2TextDisplay("\n".join(profile_lines[1:])))
         view.add_item(container)
+        add_v2_action_rows(view)
         await ctx.send(content=None, embed=None, view=view)
     else:
         await ctx.send(content="\n---\n".join([profile_lines[0], "\n".join(profile_lines[1:])]), view=view)
@@ -25650,6 +25670,7 @@ def factory_page_payload(uid: str, page: int = 0, *, view=None):
         view = MilitaryFactoriesView(uid, page=page)
     if container_components_available():
         container = V2Container(); container.add_item(V2TextDisplay(blocks[0])); view.add_item(container)
+        add_v2_action_rows(view)
         return {"content": None, "embed": None, "view": view}
     return {"content": blocks[0], "embed": None, "view": view}
 
