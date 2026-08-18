@@ -1070,9 +1070,44 @@ def add_v2_action_rows(view: View):
         view.add_item(row)
     return view
 
+def view_has_v2_text_display(view: View) -> bool:
+    if V2TextDisplay is None:
+        return False
+    pending = list(getattr(view, "children", []))
+    while pending:
+        child = pending.pop(0)
+        if isinstance(child, V2TextDisplay):
+            return True
+        pending.extend(getattr(child, "children", []) or [])
+    return False
+
+
+def add_v2_text_blocks(view: View, blocks: list[str] | tuple[str, ...]):
+    """Attach text blocks to a Components V2 view unless it already has text content."""
+    if not container_components_available() or V2Container is None or V2TextDisplay is None:
+        return view
+    if view_has_v2_text_display(view):
+        return view
+    container = V2Container()
+    for idx, block in enumerate(blocks):
+        if idx > 0 and V2Separator is not None:
+            container.add_item(V2Separator())
+        container.add_item(V2TextDisplay(str(block)))
+    try:
+        view.add_item(container)
+    except Exception:
+        return view
+    return view
+
+
 def send_payload_for_container(blocks: list[str] | tuple[str, ...], *, view=None):
     if container_components_available():
-        return {"content": None, "embed": None, "view": add_v2_action_rows(view) if view is not None else make_container_view(blocks)}
+        if view is None:
+            view = make_container_view(blocks)
+        else:
+            view = add_v2_text_blocks(view, blocks)
+            view = add_v2_action_rows(view)
+        return {"content": None, "embed": None, "view": view}
     return {"content": "\n\n---\n\n".join(str(b) for b in blocks), "embed": None, "view": view}
 
 
